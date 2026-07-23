@@ -1,77 +1,169 @@
 # Terminator Full Select
 
-An unofficial Terminator plugin that provides a visual full-scrollback
-selection mode and copies the complete retained terminal buffer through
-Terminator's native **Copy** context-menu item.
+An unofficial Terminator plugin that adds a visual full-scrollback selection
+mode and reliable copying of the complete retained terminal buffer through
+Terminator's existing **Copy** context-menu item.
 
-## Status
+## Status and compatibility
 
-`v0.1.0-rc1` is a release candidate.
+`0.2.0-rc1` is a pre-release candidate. No stable release has been published.
 
 The current version has been tested with:
 
+- Arch Linux on x86-64 with glibc
+- KDE Plasma on Wayland
 - Terminator 2.1.5
 - GTK 3
 - VTE 0.84.0 / API 2.91
-- Python 3
-- Arch Linux with KDE Plasma on Wayland
+- Python 3.14.6
 
-Other versions and desktop environments may work, but have not yet been
+The supplied native library is an ELF x86-64 glibc binary. Its versioned libc
+requirements do not exceed `GLIBC_2.14`. Other Linux x86-64 glibc systems,
+Terminator versions, and desktop environments may work, but have not yet been
 verified.
 
 ## How it works
 
 VTE does not expose a native selection covering the complete retained
-scrollback in the way required by this plugin.
+scrollback in the way required by this plugin. Terminator Full Select instead:
 
-Terminator Full Select therefore:
+1. Draws a visual overlay without changing VTE's native selection state.
+2. Keeps that overlay synchronized with output, scrolling, and resizing.
+3. Extracts and normalizes the retained VTE buffer in Python.
+4. Uses an authenticated native engine only for guarded numeric drawing
+   geometry. Python remains authoritative for text extraction and semantic
+   classification.
+5. Prepares an invalidation-aware copy snapshot and atomically commits the
+   verified text to the clipboard when **Copy** is activated.
 
-1. Draws a visual selection overlay over terminal content.
-2. Keeps the overlay synchronized while the terminal changes or scrolls.
-3. Integrates with Terminator's existing right-click **Copy** menu item.
-4. Extracts the complete retained terminal buffer when **Copy** is activated
-   while Full Select mode is active.
-5. Places the normalized Unicode text on the system clipboard.
+The native engine is accepted only when its exact SHA-256, ABI versions,
+structure sizes, feature flags, and build identifier match the Python plugin's
+embedded contract. A mismatch or runtime failure falls back to Python for the
+same frame and disables the native fast path only for the affected pane.
 
-The plugin does not modify VTE's native selection state.
+Transactional Copy uses the same retained-buffer extraction as the proven
+fallback path. Changed terminal content invalidates prepared snapshots;
+same-click extraction and a bounded retry keep the clipboard commit current.
+A failed transaction preserves the previous clipboard contents.
 
 ## Features
 
-- Full-scrollback copy through Terminator's native **Copy** menu item.
+- Full retained-scrollback copy through Terminator's native **Copy** menu item.
+- Prepared transactional Copy enabled by default.
+- Authenticated native numeric drawing fast path enabled by default.
+- Exact same-frame Python fallbacks and independent per-pane safety latches.
 - Visual selection toggle with `Ctrl+Shift+Alt+S`.
 - **Escape** clears Full Select mode only while it is active.
 - Context-menu actions for showing and clearing the visual selection.
+- A short, single-pass confirmation badge after a successful copy.
 - Content-fitted row highlighting.
-- Semantic highlighting for detected shell commands.
+- Violet semantic highlighting for detected shell commands.
 - Separate highlighting for line-number prefixes.
+- Lowest-visible-row recovery during resize and repaint.
 - Live refresh during terminal output, scrolling, typing, and resizing.
 - Unicode-aware terminal cell-width calculations.
 - Complete-buffer normalization and surrounding empty-row cleanup.
 - Optional row-coordinate diagnostics for troubleshooting.
 
-## Installation
+## Installation for users
 
-Clone the repository:
+The prebuilt binary package is the recommended installation method. It
+contains the Python plugin, the authenticated native `.so`, an installer, an
+uninstaller, and verification metadata. It intentionally does not contain the
+C source files.
+
+Requirements:
+
+- Linux x86-64 with glibc
+- Terminator with GTK 3 and VTE API 2.91
+- Python 3
+- `tar` and `sha256sum`
+- `curl` for the command-line download example, or a web browser
+
+Download the archive and `SHA256SUMS` from the
+[`terminator-full-select-v0.2.0-rc1` pre-release](https://github.com/darko5r/terminator-plugins/releases/tag/terminator-full-select-v0.2.0-rc1).
+The following commands perform the same download in a new directory:
 
 ```bash
-git clone https://github.com/darko5r/terminator-plugins.git
-cd terminator-plugins/terminator-full-select
+mkdir -p terminator-full-select-install
+cd terminator-full-select-install
+
+tag=terminator-full-select-v0.2.0-rc1
+archive=terminator-full-select-0.2.0-rc1-linux-x86_64-glibc.tar.gz
+base=https://github.com/darko5r/terminator-plugins/releases/download
+
+curl -fLO "$base/$tag/$archive"
+curl -fLO "$base/$tag/SHA256SUMS"
+sha256sum -c SHA256SUMS
+
+tar -xzf "$archive"
+cd "${archive%.tar.gz}"
+./install.sh
 ```
 
-Install the plugin for the current user:
+Do not run the installer with `sudo`. It verifies every package file and the
+native ABI contract, backs up an existing installation, and atomically installs
+only into the current user's Terminator plugin directory.
 
-```bash
-install -Dm644 \
-  full_select_visual_prototype.py \
-  "$HOME/.config/terminator/plugins/full_select_visual_prototype.py"
-```
-
-Fully close and reopen Terminator. Then open Terminator's preferences, select
-the **Plugins** section, and enable:
+Fully close and reopen Terminator. Open **Preferences**, select **Plugins**,
+and enable:
 
 ```text
 FullSelectVisualPrototype
 ```
+
+### Uninstall
+
+The installer prints the persistent uninstaller path. With the default XDG
+locations, run:
+
+```bash
+"${XDG_STATE_HOME:-$HOME/.local/state}/terminator-full-select/uninstall.sh"
+```
+
+The uninstaller backs up the installed files before removal and leaves
+unrelated files alone. It refuses to remove a plugin or native library that
+was modified after installation. Use `--force` only after reviewing those
+files and deciding that removal is intended.
+
+## Installation for developers
+
+The source tree contains the Python plugin, native C and header files, the
+Meson build definition, packaging tools, and tests. It intentionally does not
+store a compiled `.so`.
+
+Clone and verify the source:
+
+```bash
+git clone https://github.com/darko5r/terminator-plugins.git
+cd terminator-plugins/terminator-full-select
+sha256sum -c SHA256SUMS
+```
+
+Install distribution packages that provide:
+
+- Terminator, GTK 3, VTE API 2.91, and PyGObject
+- Python 3
+- Meson and Ninja
+- a C17 compiler and linker
+- GNU `sha256sum` and standard Unix installation tools
+
+Then run:
+
+```bash
+./scripts/install-developer.sh
+```
+
+The developer installer builds the native engine in a temporary directory,
+verifies the result against the exact authenticated contract embedded in the
+plugin, creates a package-shaped staging tree, and invokes the same user
+installer.
+
+The current security policy requires a byte-identical native binary, not just
+ABI compatibility. A different compiler, linker, or build environment may
+produce a safe but non-identical binary that is deliberately rejected. Most
+users should therefore install the reviewed prebuilt package. Changing the
+native contract belongs in a separate reviewed native-development workflow.
 
 ## Usage
 
@@ -88,89 +180,122 @@ keyboard input continues to the terminal normally.
 
 ### Context menu
 
-The plugin adds these entries:
+The plugin adds:
 
 - **Full Select: show visual selection**
 - **Full Select: clear visual selection**
 - **Full Select: write row-coordinate report**
 
-The normal **Copy** item is enabled and extended while Full Select mode is
+The normal **Copy** item is enabled and extended only while Full Select mode is
 active. When the mode is inactive, Terminator's standard Copy behavior is
 unchanged.
 
-The complete-scrollback handler is currently connected to the right-click
-**Copy** menu item. Do not assume that Terminator's keyboard Copy shortcut
-invokes the same full-scrollback behavior.
+The full-scrollback handler is connected to the right-click **Copy** item.
+Terminator's keyboard Copy shortcut is not guaranteed to invoke the same
+full-scrollback path.
+
+"Complete scrollback" means the content still retained by VTE. Content already
+discarded because of the terminal profile's scrollback limit cannot be copied.
+
+## Runtime fallback switches
+
+These process-local switches do not change installed files:
+
+```bash
+TFSE_DISABLE_NATIVE_FAST_PATH=1 terminator
+TFSE_DISABLE_TRANSACTIONAL_COPY=1 terminator
+```
+
+The first restores Python numeric drawing. The second restores the prior exact
+Copy path. Fully close all Terminator processes before launching with a switch.
 
 ## Privacy and diagnostics
 
-The plugin performs its work locally. The reviewed `v0.1.0-rc1` source does
-not contain networking, subprocess execution, native-code loading, or embedded
-credentials.
+The plugin runtime works locally. It does not use the network, launch
+subprocesses, or contain embedded credentials. It loads the authenticated
+native library beside the Python plugin with `ctypes`.
 
-Be aware of the following:
+Copying the complete scrollback can place commands, output, paths, tokens, and
+other sensitive terminal content on the system clipboard.
 
-- Copying the complete scrollback can place commands, output, paths, tokens, or
-  other sensitive terminal content on the system clipboard.
-- Runtime diagnostic information is written to:
+Runtime diagnostics may be written to:
 
-  ```text
-  /tmp/terminator-fullselect-overlay.txt
-  ```
+```text
+/tmp/terminator-fullselect-overlay.txt
+/tmp/terminator-fullselect-row-coordinate-probe.txt
+/tmp/terminator-fullselect-wrap-edge-probe.txt
+/tmp/terminator-fullselect-resize-event-trace.txt
+```
 
-- Choosing **Full Select: write row-coordinate report** writes:
+The row-coordinate report can include extracted terminal lines. Do not
+generate or share diagnostics when the terminal contains sensitive
+information. These files inherit permissions from the Terminator process and
+its `umask`, which matters on shared systems.
 
-  ```text
-  /tmp/terminator-fullselect-row-coordinate-probe.txt
-  ```
-
-- The row-coordinate report can contain extracted terminal lines. Do not
-  generate or share it when the terminal contains sensitive information.
-- Diagnostic files use the permissions produced by the Terminator process
-  and its current `umask`. This matters particularly on shared systems.
-
-The diagnostic files can be removed after troubleshooting:
+Remove them after troubleshooting:
 
 ```bash
 rm -f \
   /tmp/terminator-fullselect-overlay.txt \
-  /tmp/terminator-fullselect-row-coordinate-probe.txt
+  /tmp/terminator-fullselect-row-coordinate-probe.txt \
+  /tmp/terminator-fullselect-wrap-edge-probe.txt \
+  /tmp/terminator-fullselect-resize-event-trace.txt
 ```
 
-## Known limitations
+## Verification and packaging
 
-- This is a release candidate and currently has one confirmed test
-  environment.
-- The visual overlay simulates full selection; it is not a native VTE
-  selection.
-- Full-scrollback copying currently depends on locating Terminator's native
-  right-click **Copy** menu item.
-- Shell-command recognition is heuristic and may vary with prompts, themes,
-  shells, and color configurations.
-- Diagnostic files do not yet enforce private `0600` permissions themselves.
-- The source filename and plugin class retain the word `Prototype`.
-
-## Frozen release-candidate artifact
-
-The plugin file in `v0.1.0-rc1` is preserved byte-for-byte from the tested
-version.
-
-SHA-256:
-
-```text
-63359b56e585244c87c77aae24a9fb7ec79a470574f0c535c057922cd76f54fb  full_select_visual_prototype.py
-```
-
-Verify it with:
+`SHA256SUMS` is the authoritative manifest for the source project:
 
 ```bash
 sha256sum -c SHA256SUMS
 ```
 
-The opening module docstring describes an earlier visual-only development
-stage and is outdated. This README describes the actual behavior of the
-frozen release-candidate artifact. The source docstring can be corrected in a
-later release candidate without changing this preserved version.
+Maintainers update it only after reviewing the complete source diff:
+
+```bash
+./scripts/update-source-checksums.sh
+sha256sum -c SHA256SUMS
+```
+
+Run the packaging and safety suite with:
+
+```bash
+./tests/test-packaging.sh
+```
+
+After committing the reviewed release source, build a reproducible user
+archive from a clean tree:
+
+```bash
+./scripts/build-binary-package.sh
+```
+
+The archive and its release checksum are written beneath `dist/`, which is
+ignored by Git. The builder rejects a native binary stored in the source tree,
+and the binary package rejects C source, headers, and `meson.build`.
+
+## Known limitations
+
+- This is a pre-release candidate with one confirmed test environment.
+- The initial prebuilt package supports only Linux x86-64 with glibc.
+- A small flicker can still appear during continuous active resizing while
+  the mouse button remains held. Rendering stabilizes when motion stops.
+- The visual overlay simulates full selection; it is not a native VTE
+  selection.
+- Full-scrollback copying depends on locating Terminator's native right-click
+  **Copy** item.
+- Shell-command recognition is heuristic and may vary with prompts, themes,
+  shells, and color configurations.
+- Diagnostic files do not yet enforce private `0600` permissions themselves.
+- The source filename and plugin class retain the word `Prototype`.
+
+## Release history
+
+- `0.2.0-rc1` adds the authenticated native numeric drawing path, guarded
+  fallbacks, default transactional Copy, reproducible packaging, and separate
+  user/developer installation paths.
+- [`v0.1.0-rc1`](https://github.com/darko5r/terminator-plugins/releases/tag/v0.1.0-rc1)
+  is a historical pre-release candidate. It is not a stable or full release.
 
 ## License
 

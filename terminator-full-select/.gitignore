@@ -6,3 +6,6 @@ __pycache__/
 *.swp
 *.swo
 *~
+dist/
+full_select_native/build*/
+full_select_native/*.so
